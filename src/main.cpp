@@ -52,7 +52,11 @@ std::string jsonValue(const std::string& json, const std::string& key) {
     std::string value;
     for (size_t i = start; i < json.size(); ++i) {
         if (json[i] == '\\' && i + 1 < json.size()) {
-            value += json[i + 1];
+            char next = json[i + 1];
+            if (next == 'n') value += '\n';
+            else if (next == 't') value += '\t';
+            else if (next == 'r') value += '\r';
+            else value += next;
             ++i;
         } else if (json[i] == '"') {
             break;
