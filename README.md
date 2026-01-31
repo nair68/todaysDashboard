@@ -30,9 +30,22 @@ make
 ./dashboard -l "Denver, Colorado"
 ./dashboard --location "Miami, FL"
 
+# Disable colored output
+./dashboard --no-color
+
 # Help
 ./dashboard --help
 ```
+
+## Options
+
+| Flag | Description |
+|------|-------------|
+| `-l`, `--location "City, State"` | Set weather location (default: auto-detect by IP) |
+| `--no-color` | Disable colored terminal output |
+| `-h`, `--help` | Show help message |
+
+Colors are enabled by default and auto-disable when output is piped to a file or another command.
 
 ## Example Output
 
