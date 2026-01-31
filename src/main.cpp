@@ -5,6 +5,26 @@
 #include <vector>
 #include <ctime>
 #include <algorithm>
+#include <cstdlib>
+#include <unistd.h>
+
+// ANSI color codes
+namespace color {
+    const char* reset   = "\033[0m";
+    const char* bold    = "\033[1m";
+    const char* dim     = "\033[2m";
+    const char* cyan    = "\033[36m";
+    const char* yellow  = "\033[33m";
+    const char* green   = "\033[32m";
+    const char* magenta = "\033[35m";
+    const char* blue    = "\033[34m";
+    const char* white   = "\033[37m";
+    const char* red     = "\033[31m";
+
+    bool enabled = true;
+
+    const char* c(const char* code) { return enabled ? code : ""; }
+}
 
 // URL-encode a string for wttr.in (spaces -> +, preserve commas for readability)
 std::string urlEncode(const std::string& str) {
@@ -91,12 +111,15 @@ std::vector<std::string> xmlTags(const std::string& xml, const std::string& tag,
 }
 
 void printSeparator() {
-    std::cout << "\n" << std::string(60, '-') << "\n\n";
+    std::cout << "\n" << color::c(color::dim) << std::string(60, '-')
+              << color::c(color::reset) << "\n\n";
 }
 
 void showWeather(const std::string& location) {
-    std::cout << "  TODAY'S WEATHER\n";
-    std::cout << std::string(60, '-') << "\n";
+    std::cout << color::c(color::bold) << color::c(color::yellow)
+              << "  TODAY'S WEATHER" << color::c(color::reset) << "\n";
+    std::cout << color::c(color::dim) << std::string(60, '-')
+              << color::c(color::reset) << "\n";
 
     // Build wttr.in URL -- if location is provided, include it in the path
     std::string url = "wttr.in/";
@@ -131,11 +154,11 @@ void showWeather(const std::string& location) {
         // Clean up location display (wttr.in echoes '+' for spaces)
         std::string loc = lines[0];
         std::replace(loc.begin(), loc.end(), '+', ' ');
-        std::cout << "  Location:    " << loc << "\n";
-        std::cout << "  Condition:   " << lines[1] << "\n";
-        std::cout << "  Temperature: " << lines[2] << "\n";
-        std::cout << "  Humidity:    " << lines[3] << "\n";
-        std::cout << "  Wind:        " << lines[4] << "\n";
+        std::cout << color::c(color::bold) << "  Location:    " << color::c(color::reset) << color::c(color::green) << loc << color::c(color::reset) << "\n";
+        std::cout << color::c(color::bold) << "  Condition:   " << color::c(color::reset) << color::c(color::green) << lines[1] << color::c(color::reset) << "\n";
+        std::cout << color::c(color::bold) << "  Temperature: " << color::c(color::reset) << color::c(color::green) << lines[2] << color::c(color::reset) << "\n";
+        std::cout << color::c(color::bold) << "  Humidity:    " << color::c(color::reset) << color::c(color::green) << lines[3] << color::c(color::reset) << "\n";
+        std::cout << color::c(color::bold) << "  Wind:        " << color::c(color::reset) << color::c(color::green) << lines[4] << color::c(color::reset) << "\n";
     } else {
         // Fallback: just print raw data
         std::cout << "  " << data << "\n";
@@ -143,8 +166,10 @@ void showWeather(const std::string& location) {
 }
 
 void showJoke() {
-    std::cout << "  JOKE OF THE MOMENT\n";
-    std::cout << std::string(60, '-') << "\n";
+    std::cout << color::c(color::bold) << color::c(color::yellow)
+              << "  JOKE OF THE MOMENT" << color::c(color::reset) << "\n";
+    std::cout << color::c(color::dim) << std::string(60, '-')
+              << color::c(color::reset) << "\n";
 
     std::string json = exec(
         "curl -s --max-time 5 "
@@ -162,19 +187,21 @@ void showJoke() {
     if (type == "twopart") {
         std::string setup = jsonValue(json, "setup");
         std::string delivery = jsonValue(json, "delivery");
-        std::cout << "  " << setup << "\n";
-        std::cout << "  ... " << delivery << "\n";
+        std::cout << color::c(color::magenta) << "  " << setup << color::c(color::reset) << "\n";
+        std::cout << color::c(color::bold) << color::c(color::magenta) << "  ... " << delivery << color::c(color::reset) << "\n";
     } else if (type == "single") {
         std::string joke = jsonValue(json, "joke");
-        std::cout << "  " << joke << "\n";
+        std::cout << color::c(color::magenta) << "  " << joke << color::c(color::reset) << "\n";
     } else {
         std::cout << "  Could not parse joke.\n";
     }
 }
 
 void showNews() {
-    std::cout << "  TODAY'S HEADLINES\n";
-    std::cout << std::string(60, '-') << "\n";
+    std::cout << color::c(color::bold) << color::c(color::yellow)
+              << "  TODAY'S HEADLINES" << color::c(color::reset) << "\n";
+    std::cout << color::c(color::dim) << std::string(60, '-')
+              << color::c(color::reset) << "\n";
 
     std::string rss = exec(
         "curl -s --max-time 5 "
@@ -212,21 +239,31 @@ void showNews() {
     }
 
     for (size_t i = 0; i < items.size(); ++i) {
-        std::cout << "  " << (i + 1) << ". " << items[i] << "\n";
+        std::cout << color::c(color::cyan) << "  " << (i + 1) << ". "
+                  << color::c(color::reset) << color::c(color::white)
+                  << items[i] << color::c(color::reset) << "\n";
     }
 }
 
 int main(int argc, char* argv[]) {
+    // Disable color if stdout is not a terminal (e.g., piped to a file)
+    if (!isatty(fileno(stdout))) {
+        color::enabled = false;
+    }
+
     // Parse command-line arguments
     std::string location;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if ((arg == "--location" || arg == "-l") && i + 1 < argc) {
             location = argv[++i];
+        } else if (arg == "--no-color") {
+            color::enabled = false;
         } else if (arg == "--help" || arg == "-h") {
             std::cout << "Usage: dashboard [OPTIONS]\n\n"
                       << "Options:\n"
                       << "  -l, --location \"City, State\"   Set weather location (default: auto-detect)\n"
+                      << "      --no-color                 Disable colored output\n"
                       << "  -h, --help                     Show this help message\n\n"
                       << "Examples:\n"
                       << "  ./dashboard\n"
@@ -242,9 +279,11 @@ int main(int argc, char* argv[]) {
     std::strftime(dateBuf, sizeof(dateBuf), "%A, %B %d, %Y", std::localtime(&now));
 
     std::cout << "\n";
-    std::cout << std::string(60, '=') << "\n";
+    std::cout << color::c(color::bold) << color::c(color::cyan)
+              << std::string(60, '=') << "\n";
     std::cout << "  TODAY'S DASHBOARD  --  " << dateBuf << "\n";
-    std::cout << std::string(60, '=') << "\n\n";
+    std::cout << std::string(60, '=')
+              << color::c(color::reset) << "\n\n";
 
     showWeather(location);
     printSeparator();
@@ -254,7 +293,8 @@ int main(int argc, char* argv[]) {
 
     showNews();
 
-    std::cout << "\n" << std::string(60, '=') << "\n\n";
+    std::cout << "\n" << color::c(color::bold) << color::c(color::cyan)
+              << std::string(60, '=') << color::c(color::reset) << "\n\n";
 
     return 0;
 }
