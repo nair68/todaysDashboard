@@ -202,6 +202,8 @@ void showWeather(const std::string& location) {
         // Fallback: just print raw data
         std::cout << "  " << data << "\n";
     }
+
+    std::cout << "\n" << color::c(color::dim) << "  More: https://weather.com" << color::c(color::reset) << "\n";
 }
 
 void showJoke() {
@@ -282,6 +284,8 @@ void showNews() {
                   << color::c(color::reset) << color::c(color::white)
                   << items[i] << color::c(color::reset) << "\n";
     }
+
+    std::cout << "\n" << color::c(color::dim) << "  More: https://news.google.com" << color::c(color::reset) << "\n";
 }
 
 struct Game {
@@ -567,6 +571,8 @@ void showSports() {
     if (!anyGames) {
         std::cout << "  No East Coast games found today.\n";
     }
+
+    std::cout << "\n" << color::c(color::dim) << "  More: https://www.espn.com" << color::c(color::reset) << "\n";
 }
 
 int main(int argc, char* argv[]) {
