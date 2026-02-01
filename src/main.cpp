@@ -173,8 +173,7 @@ void showWeather(const std::string& location) {
 
     if (data.empty() || data.find("Unknown") != std::string::npos) {
         std::cout << "  Could not retrieve weather data.\n";
-        return;
-    }
+    } else {
 
     // Parse the 5 lines
     std::vector<std::string> lines;
@@ -202,6 +201,7 @@ void showWeather(const std::string& location) {
         // Fallback: just print raw data
         std::cout << "  " << data << "\n";
     }
+    } // end else (data retrieved)
 
     std::cout << "\n" << color::c(color::dim) << "  More: https://weather.com" << color::c(color::reset) << "\n";
 }
