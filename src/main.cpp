@@ -5,6 +5,8 @@
 #include <vector>
 #include <ctime>
 #include <algorithm>
+#include <set>
+#include <map>
 #include <cstdlib>
 #include <unistd.h>
 
@@ -282,6 +284,7 @@ struct Game {
     std::string awayScore;
     std::string homeScore;
     std::string status;
+    std::string recap;
 };
 
 std::vector<Game> parseESPNScoreboard(const std::string& json) {
@@ -317,7 +320,55 @@ std::vector<Game> parseESPNScoreboard(const std::string& json) {
         size_t statusSearch = end;
         std::string status = jsonValueFrom(json, "shortDetail", statusSearch);
 
-        games.push_back({away, home, awayScore, homeScore, status});
+        // Find headline/recap description for this game
+        std::string recap;
+        size_t headlinePos = json.find("\"headlines\"", end);
+        // Find the next *game* shortName (one containing " @ " or " VS ")
+        size_t nextGame = std::string::npos;
+        {
+            size_t search = end;
+            while (true) {
+                search = json.find(marker, search);
+                if (search == std::string::npos) break;
+                auto ns = search + marker.size();
+                auto ne = json.find('"', ns);
+                if (ne == std::string::npos) break;
+                std::string val = json.substr(ns, ne - ns);
+                if (val.find(" @ ") != std::string::npos || val.find(" VS ") != std::string::npos) {
+                    nextGame = search;
+                    break;
+                }
+                search = ne;
+            }
+        }
+        if (headlinePos != std::string::npos &&
+            (nextGame == std::string::npos || headlinePos < nextGame)) {
+            size_t descSearch = headlinePos;
+            recap = jsonValueFrom(json, "description", descSearch);
+            // Strip leading em-dash and whitespace from ESPN recaps
+            while (!recap.empty() && (recap[0] == ' ' || recap[0] == '-')) {
+                recap.erase(0, 1);
+            }
+            // Handle UTF-8 em-dash (U+2014: 0xE2 0x80 0x94)
+            if (recap.size() >= 3 &&
+                static_cast<unsigned char>(recap[0]) == 0xE2 &&
+                static_cast<unsigned char>(recap[1]) == 0x80 &&
+                static_cast<unsigned char>(recap[2]) == 0x94) {
+                recap.erase(0, 3);
+                while (!recap.empty() && recap[0] == ' ') recap.erase(0, 1);
+            }
+            // Truncate to first sentence or ~120 chars
+            if (!recap.empty()) {
+                size_t period = recap.find(". ");
+                if (period != std::string::npos && period < 120) {
+                    recap = recap.substr(0, period + 1);
+                } else if (recap.size() > 120) {
+                    recap = recap.substr(0, 120) + "...";
+                }
+            }
+        }
+
+        games.push_back({away, home, awayScore, homeScore, status, recap});
         pos = end;
     }
     return games;
@@ -341,6 +392,14 @@ void showSports() {
         {"MLB", "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard"},
     };
 
+    // East Coast teams by league
+    std::map<std::string, std::set<std::string>> eastCoast = {
+        {"NFL", {"NE", "NYJ", "NYG", "BUF", "MIA", "PHI", "PIT", "BAL", "WAS", "CAR", "ATL", "TB", "JAX"}},
+        {"NBA", {"BOS", "BKN", "NY", "PHI", "WAS", "CHA", "ATL", "MIA", "ORL"}},
+        {"NHL", {"BOS", "NYR", "NYI", "NJ", "PHI", "PIT", "WAS", "CAR", "FLA", "TB", "BUF"}},
+        {"MLB", {"NYY", "NYM", "BOS", "BAL", "TB", "PHI", "WAS", "MIA", "ATL", "PIT"}},
+    };
+
     bool anyGames = false;
 
     for (const auto& league : leagues) {
@@ -353,11 +412,21 @@ void showSports() {
         auto games = parseESPNScoreboard(json);
         if (games.empty()) continue;
 
+        // Filter to East Coast games
+        const auto& teams = eastCoast[league.name];
+        std::vector<Game> filtered;
+        for (const auto& g : games) {
+            if (teams.count(g.away) || teams.count(g.home)) {
+                filtered.push_back(g);
+            }
+        }
+        if (filtered.empty()) continue;
+
         anyGames = true;
         std::cout << color::c(color::bold) << color::c(color::blue)
                   << "  " << league.name << color::c(color::reset) << "\n";
 
-        for (const auto& g : games) {
+        for (const auto& g : filtered) {
             // Highlight the winning team
             const char* awayStyle = color::c(color::white);
             const char* homeStyle = color::c(color::white);
@@ -375,12 +444,18 @@ void showSports() {
                       << color::c(color::reset)
                       << color::c(color::dim) << "  (" << g.status << ")"
                       << color::c(color::reset) << "\n";
+
+            // Show recap/highlight if available
+            if (!g.recap.empty()) {
+                std::cout << "      " << color::c(color::dim)
+                          << g.recap << color::c(color::reset) << "\n";
+            }
         }
         std::cout << "\n";
     }
 
     if (!anyGames) {
-        std::cout << "  No games found today.\n";
+        std::cout << "  No East Coast games found today.\n";
     }
 }
 
