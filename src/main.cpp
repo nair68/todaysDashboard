@@ -251,8 +251,7 @@ void showNews() {
 
     if (rss.empty()) {
         std::cout << "  Could not retrieve news.\n";
-        return;
-    }
+    } else {
 
     // The first <title> is the feed title ("Google News"), skip it.
     // Item titles come inside <item><title>...</title></item>.
@@ -276,14 +275,14 @@ void showNews() {
 
     if (items.empty()) {
         std::cout << "  Could not parse news headlines.\n";
-        return;
-    }
-
+    } else {
     for (size_t i = 0; i < items.size(); ++i) {
         std::cout << color::c(color::cyan) << "  " << (i + 1) << ". "
                   << color::c(color::reset) << color::c(color::white)
                   << items[i] << color::c(color::reset) << "\n";
     }
+    } // end else (items parsed)
+    } // end else (rss retrieved)
 
     std::cout << "\n" << color::c(color::dim) << "  More: https://news.google.com" << color::c(color::reset) << "\n";
 }
