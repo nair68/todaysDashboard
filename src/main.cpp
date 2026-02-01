@@ -396,6 +396,17 @@ void showSports() {
     std::cout << color::c(color::dim) << std::string(60, '-')
               << color::c(color::reset) << "\n";
 
+    // Compute date strings for today (T) and yesterday (T-1) in YYYYMMDD format
+    std::time_t now = std::time(nullptr);
+    char todayBuf[9];
+    std::strftime(todayBuf, sizeof(todayBuf), "%Y%m%d", std::localtime(&now));
+    std::string todayDate(todayBuf);
+
+    std::time_t yesterday = now - 86400;
+    char yesterBuf[9];
+    std::strftime(yesterBuf, sizeof(yesterBuf), "%Y%m%d", std::localtime(&yesterday));
+    std::string yesterdayDate(yesterBuf);
+
     struct League {
         std::string name;
         std::string url;
@@ -419,13 +430,28 @@ void showSports() {
     bool anyGames = false;
 
     for (const auto& league : leagues) {
-        std::string json = exec(
-            "curl -s --max-time 5 -H \"User-Agent: Mozilla/5.0\" \"" + league.url + "\""
+        std::vector<Game> games;
+
+        // Fetch today's scoreboard
+        std::string jsonToday = exec(
+            "curl -s --max-time 5 -H \"User-Agent: Mozilla/5.0\" \""
+            + league.url + "?dates=" + todayDate + "\""
         );
+        if (!jsonToday.empty()) {
+            auto todayGames = parseESPNScoreboard(jsonToday);
+            games.insert(games.end(), todayGames.begin(), todayGames.end());
+        }
 
-        if (json.empty()) continue;
+        // Fetch yesterday's scoreboard
+        std::string jsonYesterday = exec(
+            "curl -s --max-time 5 -H \"User-Agent: Mozilla/5.0\" \""
+            + league.url + "?dates=" + yesterdayDate + "\""
+        );
+        if (!jsonYesterday.empty()) {
+            auto yesterdayGames = parseESPNScoreboard(jsonYesterday);
+            games.insert(games.end(), yesterdayGames.begin(), yesterdayGames.end());
+        }
 
-        auto games = parseESPNScoreboard(json);
         if (games.empty()) continue;
 
         // Filter to East Coast games
@@ -436,7 +462,19 @@ void showSports() {
                 filtered.push_back(g);
             }
         }
-        if (filtered.empty()) continue;
+
+        // Split into completed and upcoming
+        std::vector<Game> completed;
+        std::vector<Game> upcoming;
+        for (const auto& g : filtered) {
+            if (g.status.find("Final") != std::string::npos) {
+                completed.push_back(g);
+            } else {
+                upcoming.push_back(g);
+            }
+        }
+
+        if (completed.empty() && upcoming.empty()) continue;
 
         anyGames = true;
 
@@ -461,114 +499,176 @@ void showSports() {
                       << color::c(color::reset)
                       << color::c(color::dim) << "\u2502" << color::c(color::reset) << "\n";
         }
-        // Divider with column split
-        std::cout << color::c(color::dim) << "  \u251C"
-                  << repeatStr(hl, scoreCol) << "\u252C"
-                  << repeatStr(hl, recapCol) << "\u2524"
-                  << color::c(color::reset) << "\n";
+        // === Completed games section (two-column: scores + recaps) ===
+        if (!completed.empty()) {
+            // Divider with column split
+            std::cout << color::c(color::dim) << "  \u251C"
+                      << repeatStr(hl, scoreCol) << "\u252C"
+                      << repeatStr(hl, recapCol) << "\u2524"
+                      << color::c(color::reset) << "\n";
 
-        for (const auto& g : filtered) {
-            // Build visible score text to measure width for padding
-            std::string scoreText = " " + g.away + " " + g.awayScore
-                                  + "  @  " + g.home + " " + g.homeScore
-                                  + "  (" + g.status + ")";
-            int scorePad = scoreCol - static_cast<int>(scoreText.size());
-            if (scorePad < 0) scorePad = 0;
-            // If score overflows, truncate the status
-            if (scorePad == 0 && static_cast<int>(scoreText.size()) > scoreCol) {
-                int over = static_cast<int>(scoreText.size()) - scoreCol;
-                std::string truncStatus = g.status;
-                if (static_cast<int>(truncStatus.size()) > over + 3) {
-                    truncStatus = truncStatus.substr(0, truncStatus.size() - over - 3) + "...";
-                }
-                scoreText = " " + g.away + " " + g.awayScore
-                          + "  @  " + g.home + " " + g.homeScore
-                          + "  (" + truncStatus + ")";
-                scorePad = scoreCol - static_cast<int>(scoreText.size());
+            for (const auto& g : completed) {
+                // Build visible score text to measure width for padding
+                std::string scoreText = " " + g.away + " " + g.awayScore
+                                      + "  @  " + g.home + " " + g.homeScore
+                                      + "  (" + g.status + ")";
+                int scorePad = scoreCol - static_cast<int>(scoreText.size());
                 if (scorePad < 0) scorePad = 0;
-            }
+                // If score overflows, truncate the status
+                if (scorePad == 0 && static_cast<int>(scoreText.size()) > scoreCol) {
+                    int over = static_cast<int>(scoreText.size()) - scoreCol;
+                    std::string truncStatus = g.status;
+                    if (static_cast<int>(truncStatus.size()) > over + 3) {
+                        truncStatus = truncStatus.substr(0, truncStatus.size() - over - 3) + "...";
+                    }
+                    scoreText = " " + g.away + " " + g.awayScore
+                              + "  @  " + g.home + " " + g.homeScore
+                              + "  (" + truncStatus + ")";
+                    scorePad = scoreCol - static_cast<int>(scoreText.size());
+                    if (scorePad < 0) scorePad = 0;
+                }
 
-            // Highlight the winning team
-            const char* awayStyle = color::c(color::white);
-            const char* homeStyle = color::c(color::white);
-            if (g.status.find("Final") != std::string::npos) {
+                // Highlight the winning team
+                const char* awayStyle = color::c(color::white);
+                const char* homeStyle = color::c(color::white);
                 int as = std::atoi(g.awayScore.c_str());
                 int hs = std::atoi(g.homeScore.c_str());
                 if (as > hs) awayStyle = color::c(color::green);
                 else if (hs > as) homeStyle = color::c(color::green);
-            }
 
-            // Word-wrap recap into lines that fit the column (max 3 lines)
-            int maxRecap = recapCol - 2; // 1 char padding each side
-            std::vector<std::string> recapLines;
-            {
-                std::string remaining = g.recap;
-                int maxLines = 3;
-                while (!remaining.empty() && static_cast<int>(recapLines.size()) < maxLines) {
-                    if (static_cast<int>(remaining.size()) <= maxRecap) {
-                        recapLines.push_back(remaining);
-                        remaining.clear();
-                    } else {
-                        // Find last space within maxRecap chars for word break
-                        int breakAt = maxRecap;
-                        for (int j = maxRecap; j > 0; --j) {
-                            if (remaining[j] == ' ') { breakAt = j; break; }
-                        }
-                        // If on the last allowed line and there's still more text, truncate
-                        if (static_cast<int>(recapLines.size()) == maxLines - 1 &&
-                            static_cast<int>(remaining.size()) > maxRecap) {
-                            int trunc = breakAt > maxRecap - 3 ? maxRecap - 3 : breakAt;
-                            recapLines.push_back(remaining.substr(0, trunc) + "...");
+                // Word-wrap recap into lines that fit the column (max 3 lines)
+                int maxRecap = recapCol - 2; // 1 char padding each side
+                std::vector<std::string> recapLines;
+                {
+                    std::string remaining = g.recap;
+                    int maxLines = 3;
+                    while (!remaining.empty() && static_cast<int>(recapLines.size()) < maxLines) {
+                        if (static_cast<int>(remaining.size()) <= maxRecap) {
+                            recapLines.push_back(remaining);
                             remaining.clear();
                         } else {
-                            recapLines.push_back(remaining.substr(0, breakAt));
-                            remaining = remaining.substr(breakAt);
-                            // Trim leading space on next line
-                            if (!remaining.empty() && remaining[0] == ' ')
-                                remaining.erase(0, 1);
+                            int breakAt = maxRecap;
+                            for (int j = maxRecap; j > 0; --j) {
+                                if (remaining[j] == ' ') { breakAt = j; break; }
+                            }
+                            if (static_cast<int>(recapLines.size()) == maxLines - 1 &&
+                                static_cast<int>(remaining.size()) > maxRecap) {
+                                int trunc = breakAt > maxRecap - 3 ? maxRecap - 3 : breakAt;
+                                recapLines.push_back(remaining.substr(0, trunc) + "...");
+                                remaining.clear();
+                            } else {
+                                recapLines.push_back(remaining.substr(0, breakAt));
+                                remaining = remaining.substr(breakAt);
+                                if (!remaining.empty() && remaining[0] == ' ')
+                                    remaining.erase(0, 1);
+                            }
                         }
                     }
+                    if (recapLines.empty()) recapLines.push_back("");
                 }
-                if (recapLines.empty()) recapLines.push_back("");
+
+                // First row: score + first recap line
+                std::cout << color::c(color::dim) << "  \u2502" << color::c(color::reset)
+                          << " " << awayStyle << g.away << " " << g.awayScore
+                          << color::c(color::reset)
+                          << color::c(color::dim) << "  @  " << color::c(color::reset)
+                          << homeStyle << g.home << " " << g.homeScore
+                          << color::c(color::reset)
+                          << color::c(color::dim) << "  (" << g.status << ")"
+                          << std::string(scorePad, ' ')
+                          << color::c(color::reset);
+                {
+                    int pad = recapCol - 1 - static_cast<int>(recapLines[0].size());
+                    if (pad < 0) pad = 0;
+                    std::cout << color::c(color::dim) << "\u2502"
+                              << " " << recapLines[0] << std::string(pad, ' ')
+                              << "\u2502" << color::c(color::reset) << "\n";
+                }
+                // Continuation rows: empty score column + wrapped recap
+                for (size_t li = 1; li < recapLines.size(); ++li) {
+                    int pad = recapCol - 1 - static_cast<int>(recapLines[li].size());
+                    if (pad < 0) pad = 0;
+                    std::cout << color::c(color::dim) << "  \u2502"
+                              << std::string(scoreCol, ' ') << "\u2502"
+                              << " " << recapLines[li] << std::string(pad, ' ')
+                              << "\u2502" << color::c(color::reset) << "\n";
+                }
+            }
+        }
+
+        // === Upcoming games section (single full-width column, no recaps) ===
+        if (!upcoming.empty()) {
+            if (!completed.empty()) {
+                // Transition: close two-column with bottom-T at column position
+                std::cout << color::c(color::dim) << "  \u251C"
+                          << repeatStr(hl, scoreCol) << "\u2534"
+                          << repeatStr(hl, recapCol) << "\u2524"
+                          << color::c(color::reset) << "\n";
+            } else {
+                // No completed games; full-width divider after league name
+                std::cout << color::c(color::dim) << "  \u251C"
+                          << repeatStr(hl, fullWidth) << "\u2524"
+                          << color::c(color::reset) << "\n";
             }
 
-            // First row: score + first recap line
-            std::cout << color::c(color::dim) << "  \u2502" << color::c(color::reset)
-                      << " " << awayStyle << g.away << " " << g.awayScore
-                      << color::c(color::reset)
-                      << color::c(color::dim) << "  @  " << color::c(color::reset)
-                      << homeStyle << g.home << " " << g.homeScore
-                      << color::c(color::reset)
-                      << color::c(color::dim) << "  (" << g.status << ")"
-                      << std::string(scorePad, ' ')
-                      << color::c(color::reset);
+            // "Upcoming" sub-header row
             {
-                int pad = recapCol - 1 - static_cast<int>(recapLines[0].size());
+                std::string label = " Upcoming";
+                int pad = fullWidth - static_cast<int>(label.size());
                 if (pad < 0) pad = 0;
-                std::cout << color::c(color::dim) << "\u2502"
-                          << " " << recapLines[0] << std::string(pad, ' ')
-                          << "\u2502" << color::c(color::reset) << "\n";
+                std::cout << color::c(color::dim) << "  \u2502" << color::c(color::reset)
+                          << color::c(color::bold) << color::c(color::yellow)
+                          << label << std::string(pad, ' ')
+                          << color::c(color::reset)
+                          << color::c(color::dim) << "\u2502" << color::c(color::reset) << "\n";
             }
-            // Continuation rows: empty score column + wrapped recap
-            for (size_t li = 1; li < recapLines.size(); ++li) {
-                int pad = recapCol - 1 - static_cast<int>(recapLines[li].size());
+
+            // Divider after "Upcoming" label
+            std::cout << color::c(color::dim) << "  \u251C"
+                      << repeatStr(hl, fullWidth) << "\u2524"
+                      << color::c(color::reset) << "\n";
+
+            for (const auto& g : upcoming) {
+                // Show scores if the game is in progress
+                bool hasScores = (std::atoi(g.awayScore.c_str()) > 0 ||
+                                  std::atoi(g.homeScore.c_str()) > 0);
+                std::string upText;
+                if (hasScores) {
+                    upText = " " + g.away + " " + g.awayScore
+                           + "  @  " + g.home + " " + g.homeScore
+                           + "  (" + g.status + ")";
+                } else {
+                    upText = " " + g.away + "  @  " + g.home
+                           + "  (" + g.status + ")";
+                }
+                int pad = fullWidth - static_cast<int>(upText.size());
                 if (pad < 0) pad = 0;
-                std::cout << color::c(color::dim) << "  \u2502"
-                          << std::string(scoreCol, ' ') << "\u2502"
-                          << " " << recapLines[li] << std::string(pad, ' ')
-                          << "\u2502" << color::c(color::reset) << "\n";
+
+                std::cout << color::c(color::dim) << "  \u2502" << color::c(color::reset)
+                          << color::c(color::white) << upText
+                          << std::string(pad, ' ')
+                          << color::c(color::reset)
+                          << color::c(color::dim) << "\u2502" << color::c(color::reset) << "\n";
             }
         }
 
         // Bottom border
-        std::cout << color::c(color::dim) << "  \u2514"
-                  << repeatStr(hl, scoreCol) << "\u2534"
-                  << repeatStr(hl, recapCol) << "\u2518"
-                  << color::c(color::reset) << "\n\n";
+        if (!upcoming.empty()) {
+            // Full-width bottom (upcoming was last section)
+            std::cout << color::c(color::dim) << "  \u2514"
+                      << repeatStr(hl, fullWidth) << "\u2518"
+                      << color::c(color::reset) << "\n\n";
+        } else {
+            // Two-column bottom border (completed games were last section)
+            std::cout << color::c(color::dim) << "  \u2514"
+                      << repeatStr(hl, scoreCol) << "\u2534"
+                      << repeatStr(hl, recapCol) << "\u2518"
+                      << color::c(color::reset) << "\n\n";
+        }
     }
 
     if (!anyGames) {
-        std::cout << "  No East Coast games found today.\n";
+        std::cout << "  No East Coast games found.\n";
     }
 
     std::cout << "\n" << color::c(color::dim) << "  More: https://www.espn.com" << color::c(color::reset) << "\n";
