@@ -143,6 +143,12 @@ std::vector<std::string> xmlTags(const std::string& xml, const std::string& tag,
     return results;
 }
 
+std::string repeatStr(const std::string& s, int n) {
+    std::string result;
+    for (int i = 0; i < n; ++i) result += s;
+    return result;
+}
+
 void printSeparator() {
     std::cout << "\n" << color::c(color::dim) << std::string(60, '-')
               << color::c(color::reset) << "\n\n";
@@ -357,13 +363,20 @@ std::vector<Game> parseESPNScoreboard(const std::string& json) {
                 recap.erase(0, 3);
                 while (!recap.empty() && recap[0] == ' ') recap.erase(0, 1);
             }
-            // Truncate to first sentence or ~120 chars
+            // Truncate to first two sentences or ~200 chars
             if (!recap.empty()) {
-                size_t period = recap.find(". ");
-                if (period != std::string::npos && period < 120) {
-                    recap = recap.substr(0, period + 1);
-                } else if (recap.size() > 120) {
-                    recap = recap.substr(0, 120) + "...";
+                // Find the end of the second sentence
+                size_t first = recap.find(". ");
+                size_t second = std::string::npos;
+                if (first != std::string::npos && first + 2 < recap.size()) {
+                    second = recap.find(". ", first + 2);
+                }
+                if (second != std::string::npos && second < 200) {
+                    recap = recap.substr(0, second + 1);
+                } else if (first != std::string::npos && first < 200) {
+                    recap = recap.substr(0, first + 1);
+                } else if (recap.size() > 200) {
+                    recap = recap.substr(0, 200) + "...";
                 }
             }
         }
@@ -423,10 +436,55 @@ void showSports() {
         if (filtered.empty()) continue;
 
         anyGames = true;
-        std::cout << color::c(color::bold) << color::c(color::blue)
-                  << "  " << league.name << color::c(color::reset) << "\n";
+
+        const int scoreCol = 40;
+        const int recapCol = 46;
+        const int fullWidth = scoreCol + 1 + recapCol; // +1 for middle border │
+
+        std::string hl = "\u2500"; // ─
+
+        // Top border (full-width, no middle junction)
+        std::cout << color::c(color::dim) << "  \u250C"
+                  << repeatStr(hl, fullWidth) << "\u2510"
+                  << color::c(color::reset) << "\n";
+        // League name row (spans full width)
+        {
+            std::string label = " " + league.name;
+            int pad = fullWidth - static_cast<int>(label.size());
+            if (pad < 0) pad = 0;
+            std::cout << color::c(color::dim) << "  \u2502" << color::c(color::reset)
+                      << color::c(color::bold) << color::c(color::blue)
+                      << label << std::string(pad, ' ')
+                      << color::c(color::reset)
+                      << color::c(color::dim) << "\u2502" << color::c(color::reset) << "\n";
+        }
+        // Divider with column split
+        std::cout << color::c(color::dim) << "  \u251C"
+                  << repeatStr(hl, scoreCol) << "\u252C"
+                  << repeatStr(hl, recapCol) << "\u2524"
+                  << color::c(color::reset) << "\n";
 
         for (const auto& g : filtered) {
+            // Build visible score text to measure width for padding
+            std::string scoreText = " " + g.away + " " + g.awayScore
+                                  + "  @  " + g.home + " " + g.homeScore
+                                  + "  (" + g.status + ")";
+            int scorePad = scoreCol - static_cast<int>(scoreText.size());
+            if (scorePad < 0) scorePad = 0;
+            // If score overflows, truncate the status
+            if (scorePad == 0 && static_cast<int>(scoreText.size()) > scoreCol) {
+                int over = static_cast<int>(scoreText.size()) - scoreCol;
+                std::string truncStatus = g.status;
+                if (static_cast<int>(truncStatus.size()) > over + 3) {
+                    truncStatus = truncStatus.substr(0, truncStatus.size() - over - 3) + "...";
+                }
+                scoreText = " " + g.away + " " + g.awayScore
+                          + "  @  " + g.home + " " + g.homeScore
+                          + "  (" + truncStatus + ")";
+                scorePad = scoreCol - static_cast<int>(scoreText.size());
+                if (scorePad < 0) scorePad = 0;
+            }
+
             // Highlight the winning team
             const char* awayStyle = color::c(color::white);
             const char* homeStyle = color::c(color::white);
@@ -437,21 +495,73 @@ void showSports() {
                 else if (hs > as) homeStyle = color::c(color::green);
             }
 
-            std::cout << "    " << awayStyle << g.away << " " << g.awayScore
+            // Word-wrap recap into lines that fit the column (max 3 lines)
+            int maxRecap = recapCol - 2; // 1 char padding each side
+            std::vector<std::string> recapLines;
+            {
+                std::string remaining = g.recap;
+                int maxLines = 3;
+                while (!remaining.empty() && static_cast<int>(recapLines.size()) < maxLines) {
+                    if (static_cast<int>(remaining.size()) <= maxRecap) {
+                        recapLines.push_back(remaining);
+                        remaining.clear();
+                    } else {
+                        // Find last space within maxRecap chars for word break
+                        int breakAt = maxRecap;
+                        for (int j = maxRecap; j > 0; --j) {
+                            if (remaining[j] == ' ') { breakAt = j; break; }
+                        }
+                        // If on the last allowed line and there's still more text, truncate
+                        if (static_cast<int>(recapLines.size()) == maxLines - 1 &&
+                            static_cast<int>(remaining.size()) > maxRecap) {
+                            int trunc = breakAt > maxRecap - 3 ? maxRecap - 3 : breakAt;
+                            recapLines.push_back(remaining.substr(0, trunc) + "...");
+                            remaining.clear();
+                        } else {
+                            recapLines.push_back(remaining.substr(0, breakAt));
+                            remaining = remaining.substr(breakAt);
+                            // Trim leading space on next line
+                            if (!remaining.empty() && remaining[0] == ' ')
+                                remaining.erase(0, 1);
+                        }
+                    }
+                }
+                if (recapLines.empty()) recapLines.push_back("");
+            }
+
+            // First row: score + first recap line
+            std::cout << color::c(color::dim) << "  \u2502" << color::c(color::reset)
+                      << " " << awayStyle << g.away << " " << g.awayScore
                       << color::c(color::reset)
                       << color::c(color::dim) << "  @  " << color::c(color::reset)
                       << homeStyle << g.home << " " << g.homeScore
                       << color::c(color::reset)
                       << color::c(color::dim) << "  (" << g.status << ")"
-                      << color::c(color::reset) << "\n";
-
-            // Show recap/highlight if available
-            if (!g.recap.empty()) {
-                std::cout << "      " << color::c(color::dim)
-                          << g.recap << color::c(color::reset) << "\n";
+                      << std::string(scorePad, ' ')
+                      << color::c(color::reset);
+            {
+                int pad = recapCol - 1 - static_cast<int>(recapLines[0].size());
+                if (pad < 0) pad = 0;
+                std::cout << color::c(color::dim) << "\u2502"
+                          << " " << recapLines[0] << std::string(pad, ' ')
+                          << "\u2502" << color::c(color::reset) << "\n";
+            }
+            // Continuation rows: empty score column + wrapped recap
+            for (size_t li = 1; li < recapLines.size(); ++li) {
+                int pad = recapCol - 1 - static_cast<int>(recapLines[li].size());
+                if (pad < 0) pad = 0;
+                std::cout << color::c(color::dim) << "  \u2502"
+                          << std::string(scoreCol, ' ') << "\u2502"
+                          << " " << recapLines[li] << std::string(pad, ' ')
+                          << "\u2502" << color::c(color::reset) << "\n";
             }
         }
-        std::cout << "\n";
+
+        // Bottom border
+        std::cout << color::c(color::dim) << "  \u2514"
+                  << repeatStr(hl, scoreCol) << "\u2534"
+                  << repeatStr(hl, recapCol) << "\u2518"
+                  << color::c(color::reset) << "\n\n";
     }
 
     if (!anyGames) {
