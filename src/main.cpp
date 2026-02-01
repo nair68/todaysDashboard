@@ -87,6 +87,37 @@ std::string jsonValue(const std::string& json, const std::string& key) {
     return value;
 }
 
+// Extract a JSON string value by key, searching from a given position
+// Returns the value and updates searchFrom to point past the found value
+std::string jsonValueFrom(const std::string& json, const std::string& key, size_t& searchFrom) {
+    std::string search = "\"" + key + "\":\"";
+    auto pos = json.find(search, searchFrom);
+    if (pos == std::string::npos) {
+        search = "\"" + key + "\": \"";
+        pos = json.find(search, searchFrom);
+        if (pos == std::string::npos) return "";
+    }
+    auto start = pos + search.size();
+    std::string value;
+    size_t i = start;
+    for (; i < json.size(); ++i) {
+        if (json[i] == '\\' && i + 1 < json.size()) {
+            char next = json[i + 1];
+            if (next == 'n') value += '\n';
+            else if (next == 't') value += '\t';
+            else if (next == 'r') value += '\r';
+            else value += next;
+            ++i;
+        } else if (json[i] == '"') {
+            break;
+        } else {
+            value += json[i];
+        }
+    }
+    searchFrom = i;
+    return value;
+}
+
 // Extract text between XML tags: <tag>...</tag>
 std::vector<std::string> xmlTags(const std::string& xml, const std::string& tag, int limit) {
     std::vector<std::string> results;
@@ -245,6 +276,107 @@ void showNews() {
     }
 }
 
+struct Game {
+    std::string away;
+    std::string home;
+    std::string awayScore;
+    std::string homeScore;
+    std::string status;
+};
+
+std::vector<Game> parseESPNScoreboard(const std::string& json) {
+    std::vector<Game> games;
+    std::string marker = "\"shortName\":\"";
+    size_t pos = 0;
+
+    while (true) {
+        pos = json.find(marker, pos);
+        if (pos == std::string::npos) break;
+        auto start = pos + marker.size();
+        auto end = json.find('"', start);
+        if (end == std::string::npos) break;
+        std::string shortName = json.substr(start, end - start);
+
+        // Parse "AWAY @ HOME" from shortName
+        auto atPos = shortName.find(" @ ");
+        if (atPos == std::string::npos) { pos = end; continue; }
+        std::string away = shortName.substr(0, atPos);
+        std::string home = shortName.substr(atPos + 3);
+
+        // Find the two scores (home competitor listed first, then away)
+        size_t scoreSearch = end;
+        std::string homeScore = jsonValueFrom(json, "score", scoreSearch);
+        std::string awayScore = jsonValueFrom(json, "score", scoreSearch);
+
+        // Find game status
+        size_t statusSearch = end;
+        std::string status = jsonValueFrom(json, "shortDetail", statusSearch);
+
+        games.push_back({away, home, awayScore, homeScore, status});
+        pos = end;
+    }
+    return games;
+}
+
+void showSports() {
+    std::cout << color::c(color::bold) << color::c(color::yellow)
+              << "  SPORTS SCORES" << color::c(color::reset) << "\n";
+    std::cout << color::c(color::dim) << std::string(60, '-')
+              << color::c(color::reset) << "\n";
+
+    struct League {
+        std::string name;
+        std::string url;
+    };
+
+    std::vector<League> leagues = {
+        {"NBA", "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"},
+        {"NHL", "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"},
+    };
+
+    bool anyGames = false;
+
+    for (const auto& league : leagues) {
+        std::string json = exec(
+            "curl -s --max-time 5 -H \"User-Agent: Mozilla/5.0\" \"" + league.url + "\""
+        );
+
+        if (json.empty()) continue;
+
+        auto games = parseESPNScoreboard(json);
+        if (games.empty()) continue;
+
+        anyGames = true;
+        std::cout << color::c(color::bold) << color::c(color::blue)
+                  << "  " << league.name << color::c(color::reset) << "\n";
+
+        for (const auto& g : games) {
+            // Highlight the winning team
+            const char* awayStyle = color::c(color::white);
+            const char* homeStyle = color::c(color::white);
+            if (g.status.find("Final") != std::string::npos) {
+                int as = std::atoi(g.awayScore.c_str());
+                int hs = std::atoi(g.homeScore.c_str());
+                if (as > hs) awayStyle = color::c(color::green);
+                else if (hs > as) homeStyle = color::c(color::green);
+            }
+
+            std::cout << "    " << awayStyle << g.away << " " << g.awayScore
+                      << color::c(color::reset)
+                      << color::c(color::dim) << "  @  " << color::c(color::reset)
+                      << homeStyle << g.home << " " << g.homeScore
+                      << color::c(color::reset)
+                      << color::c(color::dim) << "  (" << g.status << ")"
+                      << color::c(color::reset) << "\n";
+        }
+        std::cout << "\n";
+    }
+
+    if (!anyGames) {
+        std::cout << "  No games found today.\n";
+    }
+}
+
 int main(int argc, char* argv[]) {
     // Disable color if stdout is not a terminal (e.g., piped to a file)
     if (!isatty(fileno(stdout))) {
@@ -292,8 +424,11 @@ int main(int argc, char* argv[]) {
     printSeparator();
 
     showNews();
+    printSeparator();
 
-    std::cout << "\n" << color::c(color::bold) << color::c(color::cyan)
+    showSports();
+
+    std::cout << color::c(color::bold) << color::c(color::cyan)
               << std::string(60, '=') << color::c(color::reset) << "\n\n";
 
     return 0;
