@@ -396,16 +396,20 @@ void showSports() {
     std::cout << color::c(color::dim) << std::string(60, '-')
               << color::c(color::reset) << "\n";
 
-    // Compute date strings for today (T) and yesterday (T-1) in YYYYMMDD format
+    // Compute date strings for today (T) and yesterday (T-1)
     std::time_t now = std::time(nullptr);
     char todayBuf[9];
     std::strftime(todayBuf, sizeof(todayBuf), "%Y%m%d", std::localtime(&now));
     std::string todayDate(todayBuf);
+    char todayLabel[32];
+    std::strftime(todayLabel, sizeof(todayLabel), "%A %m/%d", std::localtime(&now));
 
     std::time_t yesterday = now - 86400;
     char yesterBuf[9];
     std::strftime(yesterBuf, sizeof(yesterBuf), "%Y%m%d", std::localtime(&yesterday));
     std::string yesterdayDate(yesterBuf);
+    char yesterLabel[32];
+    std::strftime(yesterLabel, sizeof(yesterLabel), "%A %m/%d", std::localtime(&yesterday));
 
     struct League {
         std::string name;
@@ -430,51 +434,43 @@ void showSports() {
     bool anyGames = false;
 
     for (const auto& league : leagues) {
-        std::vector<Game> games;
-
-        // Fetch today's scoreboard
-        std::string jsonToday = exec(
-            "curl -s --max-time 5 -H \"User-Agent: Mozilla/5.0\" \""
-            + league.url + "?dates=" + todayDate + "\""
-        );
-        if (!jsonToday.empty()) {
-            auto todayGames = parseESPNScoreboard(jsonToday);
-            games.insert(games.end(), todayGames.begin(), todayGames.end());
-        }
-
-        // Fetch yesterday's scoreboard
-        std::string jsonYesterday = exec(
-            "curl -s --max-time 5 -H \"User-Agent: Mozilla/5.0\" \""
-            + league.url + "?dates=" + yesterdayDate + "\""
-        );
-        if (!jsonYesterday.empty()) {
-            auto yesterdayGames = parseESPNScoreboard(jsonYesterday);
-            games.insert(games.end(), yesterdayGames.begin(), yesterdayGames.end());
-        }
-
-        if (games.empty()) continue;
-
-        // Filter to East Coast games
         const auto& teams = eastCoast[league.name];
-        std::vector<Game> filtered;
-        for (const auto& g : games) {
-            if (teams.count(g.away) || teams.count(g.home)) {
-                filtered.push_back(g);
-            }
-        }
 
-        // Split into completed and upcoming
-        std::vector<Game> completed;
-        std::vector<Game> upcoming;
-        for (const auto& g : filtered) {
-            if (g.status.find("Final") != std::string::npos) {
-                completed.push_back(g);
-            } else {
+        // Helper: fetch, parse, and filter to East Coast teams
+        auto fetchAndFilter = [&](const std::string& date) {
+            std::vector<Game> out;
+            std::string json = exec(
+                "curl -s --max-time 5 -H \"User-Agent: Mozilla/5.0\" \""
+                + league.url + "?dates=" + date + "\""
+            );
+            if (!json.empty()) {
+                for (auto& g : parseESPNScoreboard(json)) {
+                    if (teams.count(g.away) || teams.count(g.home))
+                        out.push_back(g);
+                }
+            }
+            return out;
+        };
+
+        auto todayFiltered = fetchAndFilter(todayDate);
+        auto yesterFiltered = fetchAndFilter(yesterdayDate);
+
+        // Split each day into completed and upcoming
+        std::vector<Game> completedToday, completedYesterday, upcoming;
+        for (const auto& g : todayFiltered) {
+            if (g.status.find("Final") != std::string::npos)
+                completedToday.push_back(g);
+            else
                 upcoming.push_back(g);
-            }
+        }
+        for (const auto& g : yesterFiltered) {
+            if (g.status.find("Final") != std::string::npos)
+                completedYesterday.push_back(g);
+            // yesterday's non-final games are stale; skip them
         }
 
-        if (completed.empty() && upcoming.empty()) continue;
+        bool hasCompleted = !completedToday.empty() || !completedYesterday.empty();
+        if (!hasCompleted && upcoming.empty()) continue;
 
         anyGames = true;
 
@@ -500,21 +496,58 @@ void showSports() {
                       << color::c(color::dim) << "\u2502" << color::c(color::reset) << "\n";
         }
         // === Completed games section (two-column: scores + recaps) ===
-        if (!completed.empty()) {
-            // Divider with column split
+        // Render completed games grouped by date (today first, then yesterday)
+        struct DateGroup {
+            const char* label;
+            const std::vector<Game>* games;
+        };
+        std::vector<DateGroup> dateGroups;
+        if (!completedToday.empty())
+            dateGroups.push_back({todayLabel, &completedToday});
+        if (!completedYesterday.empty())
+            dateGroups.push_back({yesterLabel, &completedYesterday});
+
+        for (size_t di = 0; di < dateGroups.size(); ++di) {
+            const auto& dg = dateGroups[di];
+
+            if (di == 0) {
+                // First date group: two-column divider after league name
+                std::cout << color::c(color::dim) << "  \u251C"
+                          << repeatStr(hl, scoreCol) << "\u252C"
+                          << repeatStr(hl, recapCol) << "\u2524"
+                          << color::c(color::reset) << "\n";
+            } else {
+                // Subsequent date group: inter-group divider within two-column layout
+                std::cout << color::c(color::dim) << "  \u251C"
+                          << repeatStr(hl, scoreCol) << "\u253C"
+                          << repeatStr(hl, recapCol) << "\u2524"
+                          << color::c(color::reset) << "\n";
+            }
+
+            // Date sub-header spanning both columns
+            {
+                std::string label = std::string(" ") + dg.label;
+                int pad = fullWidth - static_cast<int>(label.size());
+                if (pad < 0) pad = 0;
+                std::cout << color::c(color::dim) << "  \u2502" << color::c(color::reset)
+                          << color::c(color::dim) << color::c(color::bold)
+                          << label << std::string(pad, ' ')
+                          << color::c(color::reset)
+                          << color::c(color::dim) << "\u2502" << color::c(color::reset) << "\n";
+            }
+            // Divider after date label, restoring two-column split
             std::cout << color::c(color::dim) << "  \u251C"
-                      << repeatStr(hl, scoreCol) << "\u252C"
+                      << repeatStr(hl, scoreCol) << "\u253C"
                       << repeatStr(hl, recapCol) << "\u2524"
                       << color::c(color::reset) << "\n";
 
-            for (const auto& g : completed) {
+            for (const auto& g : *dg.games) {
                 // Build visible score text to measure width for padding
                 std::string scoreText = " " + g.away + " " + g.awayScore
                                       + "  @  " + g.home + " " + g.homeScore
                                       + "  (" + g.status + ")";
                 int scorePad = scoreCol - static_cast<int>(scoreText.size());
                 if (scorePad < 0) scorePad = 0;
-                // If score overflows, truncate the status
                 if (scorePad == 0 && static_cast<int>(scoreText.size()) > scoreCol) {
                     int over = static_cast<int>(scoreText.size()) - scoreCol;
                     std::string truncStatus = g.status;
@@ -537,7 +570,7 @@ void showSports() {
                 else if (hs > as) homeStyle = color::c(color::green);
 
                 // Word-wrap recap into lines that fit the column (max 3 lines)
-                int maxRecap = recapCol - 2; // 1 char padding each side
+                int maxRecap = recapCol - 2;
                 std::vector<std::string> recapLines;
                 {
                     std::string remaining = g.recap;
@@ -584,7 +617,6 @@ void showSports() {
                               << " " << recapLines[0] << std::string(pad, ' ')
                               << "\u2502" << color::c(color::reset) << "\n";
                 }
-                // Continuation rows: empty score column + wrapped recap
                 for (size_t li = 1; li < recapLines.size(); ++li) {
                     int pad = recapCol - 1 - static_cast<int>(recapLines[li].size());
                     if (pad < 0) pad = 0;
@@ -598,7 +630,7 @@ void showSports() {
 
         // === Upcoming games section (single full-width column, no recaps) ===
         if (!upcoming.empty()) {
-            if (!completed.empty()) {
+            if (hasCompleted) {
                 // Transition: close two-column with bottom-T at column position
                 std::cout << color::c(color::dim) << "  \u251C"
                           << repeatStr(hl, scoreCol) << "\u2534"
