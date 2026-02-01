@@ -297,11 +297,16 @@ std::vector<Game> parseESPNScoreboard(const std::string& json) {
         if (end == std::string::npos) break;
         std::string shortName = json.substr(start, end - start);
 
-        // Parse "AWAY @ HOME" from shortName
-        auto atPos = shortName.find(" @ ");
-        if (atPos == std::string::npos) { pos = end; continue; }
+        // Parse "AWAY @ HOME" or "AWAY VS HOME" from shortName
+        std::string sep = " @ ";
+        auto atPos = shortName.find(sep);
+        if (atPos == std::string::npos) {
+            sep = " VS ";
+            atPos = shortName.find(sep);
+            if (atPos == std::string::npos) { pos = end; continue; }
+        }
         std::string away = shortName.substr(0, atPos);
-        std::string home = shortName.substr(atPos + 3);
+        std::string home = shortName.substr(atPos + sep.size());
 
         // Find the two scores (home competitor listed first, then away)
         size_t scoreSearch = end;
@@ -330,8 +335,10 @@ void showSports() {
     };
 
     std::vector<League> leagues = {
+        {"NFL", "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"},
         {"NBA", "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"},
         {"NHL", "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"},
+        {"MLB", "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard"},
     };
 
     bool anyGames = false;
