@@ -168,7 +168,7 @@ void showWeather(const std::string& location) {
     url += "?format=%l\\n%C\\n%t\\n%h\\n%w";
 
     std::string data = exec(
-        "curl -s --max-time 5 \"" + url + "\""
+        "curl -s --max-time 10 \"" + url + "\""
     );
 
     if (data.empty() || data.find("Unknown") != std::string::npos) {
